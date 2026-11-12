@@ -1,0 +1,15 @@
+node_modules
+.next
+.env*
+data
+.git
+.playwright-cli
+docs/evidence
+output
+docs
+.codex
+.agents
+*.log
+*.tsbuildinfo
+deploy/certificates
+deploy/*.key

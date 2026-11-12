@@ -1,0 +1,88 @@
+name: buzlike-pos-pilot
+x-logs: &logs
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+x-app: &app
+  image: buzlike-pos:${RELEASE_TAG:?Set an immutable RELEASE_TAG}
+  build:
+    context: .
+    args:
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?Set the HTTPS public origin}
+  env_file: ${POS_ENV_FILE:-.env.production}
+  init: true
+  restart: unless-stopped
+  logging: *logs
+  read_only: true
+  tmpfs: [/tmp, "/app/.next/cache:uid=1000,gid=1000"]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  stop_grace_period: 45s
+services:
+  db:
+    image: postgres:17
+    command: [postgres, -c, log_statement=none, -c, log_min_error_statement=panic, -c, log_parameter_max_length_on_error=0, -c, log_error_verbosity=terse]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: buzlike
+      POSTGRES_USER: buzlike
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique database password}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    logging: *logs
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U buzlike -d buzlike']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  migrate:
+    <<: *app
+    restart: "no"
+    command: [node, node_modules/prisma/build/index.js, migrate, deploy]
+    depends_on: {db: {condition: service_healthy}}
+  app:
+    <<: *app
+    command: [node, node_modules/next/dist/bin/next, start, --hostname, 0.0.0.0, --port, "3100"]
+    ports: ["127.0.0.1:3100:3100"]
+    volumes: [slip-data:/app/data/slips]
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 8s
+      start_period: 30s
+      retries: 3
+  email-worker:
+    <<: *app
+    profiles: [workers]
+    command: [node, node_modules/tsx/dist/cli.mjs, scripts/email-worker.mts]
+    depends_on: {app: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, node, node_modules/tsx/dist/cli.mjs, scripts/worker-health.mts, email]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+  pilot-worker:
+    <<: *app
+    profiles: [workers]
+    command: [node, node_modules/tsx/dist/cli.mjs, scripts/pilot-worker.mts]
+    depends_on: {app: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, node, node_modules/tsx/dist/cli.mjs, scripts/worker-health.mts, pilot]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 3
+  monitor:
+    <<: *app
+    profiles: [workers]
+    command: [node, node_modules/tsx/dist/cli.mjs, scripts/ops-monitor.mts]
+    depends_on: {app: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, node, node_modules/tsx/dist/cli.mjs, scripts/worker-health.mts, monitor]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 3
+volumes:
+  postgres-data:
+  slip-data:

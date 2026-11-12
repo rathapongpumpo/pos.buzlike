@@ -1,0 +1,16 @@
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { db } from "../src/lib/db";
+const phase2 = process.argv[2] === "phase2";
+const before = JSON.parse(await readFile(phase2 ? "data/backups/pre-phase2-2026-11-08T12-06-42-676Z.json" : "data/backups/pre-phase1-2026-11-08T05-30-58-422Z.json", "utf8"));
+const after = await db.$queryRaw`SELECT (SELECT count(*)::int FROM "Tenant") AS tenants, (SELECT count(*)::int FROM "Order") AS orders, (SELECT coalesce(sum("grandTotal"),0)::text FROM "Order") AS order_total, (SELECT count(*)::int FROM "User") AS users, (SELECT count(*)::int FROM "Product") AS products, (SELECT coalesce(sum("directStockQty"),0)::bigint::text FROM "Product") AS stock_total`;
+assert.deepEqual(after, before);
+const [stock] = await db.$queryRaw<{ total: string; negatives: number; missing: number }[]>`SELECT (SELECT coalesce(sum(quantity),0)::bigint::text FROM "BranchProduct") AS total, (SELECT count(*)::int FROM "BranchProduct" WHERE quantity < 0) AS negatives, (SELECT count(*)::int FROM "Product" p JOIN "StoreBranch" b ON b."tenantId"=p."tenantId" LEFT JOIN "BranchProduct" bp ON bp."productId"=p.id AND bp."branchId"=b.id WHERE bp."productId" IS NULL) AS missing`;
+assert.equal(stock.total, before[0].stock_total);
+assert.equal(stock.negatives, 0); assert.equal(stock.missing, 0);
+const result = { before, after, stock, passed: true };
+await mkdir("docs/phases/evidence", { recursive: true });
+await writeFile(phase2 ? "docs/phases/evidence/phase2/data-preservation.json" : "docs/phases/evidence/phase1-data-preservation.json", JSON.stringify(result, null, 2));
+console.log(JSON.stringify(result));
+await db.$disconnect();

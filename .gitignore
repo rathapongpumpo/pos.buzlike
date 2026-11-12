@@ -1,0 +1,40 @@
+# Dependencies and generated builds
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+*.log
+
+# Local credentials; publish sanitized templates only
+.env*
+!.env.example
+!.env.production.example
+!.env.backup.example
+*.pem
+*.key
+*.p12
+*.pfx
+deploy/certificates/
+
+# Databases, private uploads, backups, and generated QA artifacts
+data/
+backups/
+*.dump
+*.pgdump
+*.pgdump.enc
+*.sqlite
+*.sqlite3
+output/
+docs/evidence/
+docs/phases/evidence/
+.playwright-cli/
+playwright-report/
+test-results/
+
+# Local tool state
+.codex/
+.agents/
+.hostinger/
+.DS_Store
+Thumbs.db
