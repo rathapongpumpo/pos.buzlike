@@ -2,6 +2,8 @@ import "dotenv/config";
 import { spawn } from "node:child_process";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+if (process.env.DATABASE_URL?.startsWith("mysql:"))
+  throw Error("Use npm run ops:backup:mysql for MySQL/MariaDB; this command is PostgreSQL-only");
 import { backupKey, encryptBackup } from "./lib/backup-crypto";
 const key = backupKey(process.env.BACKUP_ENCRYPTION_KEY),
   root = path.resolve("data/backups");

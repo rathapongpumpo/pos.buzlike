@@ -3,6 +3,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
+COPY scripts/prisma-provider.mjs ./scripts/prisma-provider.mjs
 RUN npm ci
 COPY . .
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3100

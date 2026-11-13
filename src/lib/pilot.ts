@@ -1,3 +1,5 @@
+import { transactionLock } from "./database-dialect";
+import { databaseClock, lockRow } from "./database-dialect";
 import { randomBytes, createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -9,10 +11,7 @@ const DAY = 86400000;
 export const pilotTokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
 export async function databaseTime(tx: Prisma.TransactionClient) {
-  const [row] = await tx.$queryRaw<
-    { now: Date }[]
-  >`SELECT clock_timestamp() AS now`;
-  return row.now;
+  return databaseClock(tx);
 }
 async function admin(tx: Prisma.TransactionClient, id: string) {
   const u = await tx.user.findUnique({ where: { id } });
@@ -22,9 +21,7 @@ export async function lockPilotCampaign(
   tx: Prisma.TransactionClient,
   id: string,
 ) {
-  const rows = await tx.$queryRaw<
-    { id: string }[]
-  >`SELECT id FROM "PilotCampaign" WHERE id=${id} FOR UPDATE`;
+  const rows = await lockRow(tx, "PilotCampaign", id);
   assert(rows.length, "ไม่พบโครงการนำร่อง", 404);
   return tx.pilotCampaign.findUniqueOrThrow({ where: { id } });
 }
@@ -33,7 +30,7 @@ async function lockedInvitation(
   campaignId: string,
   id: string,
 ) {
-  await tx.$queryRaw`SELECT id FROM "PilotInvitation" WHERE id=${id} AND "campaignId"=${campaignId} FOR UPDATE`;
+  await lockRow(tx, "PilotInvitation", id, campaignId);
   const i = await tx.pilotInvitation.findUniqueOrThrow({ where: { id } });
   assert(i.campaignId === campaignId, "คำเชิญไม่ตรงโครงการ", 403);
   return i;
@@ -143,7 +140,7 @@ export async function reservePilotContext(
   return serial(async (tx) => {
     const campaign = await lockPilotCampaign(tx, preview.campaignId);
     const invite = await lockedInvitation(tx, campaign.id, preview.id);
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ownerId}))`;
+    await transactionLock(tx, ownerId);
     const now = await databaseTime(tx);
     const user = await tx.user.findUniqueOrThrow({ where: { id: ownerId } });
     assert(user.emailVerifiedAt, "กรุณายืนยันอีเมลก่อนรับสิทธิ์", 403);
@@ -243,7 +240,7 @@ export async function activatePilot(
     preview.campaignId,
     preview.invitationId,
   );
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ownerId}))`;
+  await transactionLock(tx, ownerId);
   const e = await tx.pilotEnrollment.findUniqueOrThrow({
     where: { id: preview.id },
   });
@@ -385,6 +382,6 @@ export async function preparePilotOnboarding(
   );
   await lockPilotCampaign(tx, e.campaignId);
   await lockedInvitation(tx, e.campaignId, e.invitationId);
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ownerId}))`;
+  await transactionLock(tx, ownerId);
   return e;
 }

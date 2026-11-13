@@ -11,6 +11,7 @@ import { db } from "./db";
 import { databaseTime, lockPilotCampaign } from "./pilot";
 import { effectiveTenant } from "./entitlements";
 import { outboundAllowed } from "./operations";
+import { mysqlDatabase, databaseClock } from "./database-dialect";
 
 const encryptionKey = () => {
   if (!process.env.AUTH_SECRET) throw new Error("AUTH_SECRET is required");
@@ -229,9 +230,29 @@ export async function flushEmailOutbox(
       const lease = randomUUID();
       // Prisma stores DateTime as UTC timestamp without timezone. Never compare
       // those columns against a session-local clock (the DB may run in Bangkok).
-      const rows = await client.$queryRaw<
-        EmailOutbox[]
-      >`UPDATE "EmailOutbox" SET "lockedAt"=(now() AT TIME ZONE 'UTC'), "lockedBy"=${lease}, attempts=attempts+1 WHERE id=(SELECT id FROM "EmailOutbox" WHERE (${options.onlyId ?? null}::text IS NULL OR id=${options.onlyId ?? null}) AND "sentAt" IS NULL AND "failedAt" IS NULL AND "availableAt" <= (now() AT TIME ZONE 'UTC') AND ("expiresAt" IS NULL OR "expiresAt">(now() AT TIME ZONE 'UTC')) AND ("lockedAt" IS NULL OR "lockedAt"<(now() AT TIME ZONE 'UTC')-interval '5 minutes') ORDER BY "availableAt", "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`;
+      const rows = mysqlDatabase()
+        ? await client.$transaction(
+            async (tx) => {
+              const ids = await tx.$queryRaw<
+                { id: string }[]
+              >`SELECT id FROM EmailOutbox WHERE (${options.onlyId ?? null} IS NULL OR id=${options.onlyId ?? null}) AND sentAt IS NULL AND failedAt IS NULL AND availableAt <= UTC_TIMESTAMP(3) AND (expiresAt IS NULL OR expiresAt>UTC_TIMESTAMP(3)) AND (lockedAt IS NULL OR lockedAt<UTC_TIMESTAMP(3)-INTERVAL 5 MINUTE) ORDER BY availableAt, createdAt LIMIT 1 FOR UPDATE SKIP LOCKED`;
+              if (!ids[0]) return [];
+              return [
+                await tx.emailOutbox.update({
+                  where: { id: ids[0].id },
+                  data: {
+                    lockedAt: await databaseClock(tx),
+                    lockedBy: lease,
+                    attempts: { increment: 1 },
+                  },
+                }),
+              ];
+            },
+            { isolationLevel: "ReadCommitted" },
+          )
+        : await client.$queryRaw<
+            EmailOutbox[]
+          >`UPDATE "EmailOutbox" SET "lockedAt"=(now() AT TIME ZONE 'UTC'), "lockedBy"=${lease}, attempts=attempts+1 WHERE id=(SELECT id FROM "EmailOutbox" WHERE (${options.onlyId ?? null}::text IS NULL OR id=${options.onlyId ?? null}) AND "sentAt" IS NULL AND "failedAt" IS NULL AND "availableAt" <= (now() AT TIME ZONE 'UTC') AND ("expiresAt" IS NULL OR "expiresAt">(now() AT TIME ZONE 'UTC')) AND ("lockedAt" IS NULL OR "lockedAt"<(now() AT TIME ZONE 'UTC')-interval '5 minutes') ORDER BY "availableAt", "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`;
       const row = rows[0];
       if (!row) break;
       let valid = true;

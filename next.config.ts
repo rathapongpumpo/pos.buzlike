@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
   devIndicators: false,
+  outputFileTracingRoot: process.cwd(),
   webpack(config, { dev }) {
     if (dev)
       config.watchOptions = {

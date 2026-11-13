@@ -1,0 +1,938 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Operational metadata is separate from customer/financial records.
+model WorkerHeartbeat {
+  name                String    @id
+  lastAttemptAt       DateTime
+  lastSuccessAt       DateTime?
+  lastFailureAt       DateTime?
+  consecutiveFailures Int       @default(0)
+  state               String    @db.LongText
+}
+
+// A restored copy stays quarantined even if SMTP environment settings are copied.
+model OperationalControl {
+  id                    String    @id @default("platform") @db.VarChar(64)
+  outboundQuarantinedAt DateTime?
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. SAAS PLATFORM, TENANT & BILLING MODELS
+// ==========================================
+
+enum SystemRole {
+  USER
+  SUPER_ADMIN
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  LIFETIME_ACTIVE
+  PAST_DUE
+  READ_ONLY
+  SUSPENDED
+}
+
+enum PlanCode {
+  FREE_TRIAL
+  STARTER_MONTHLY
+  STARTER_YEARLY
+  PRO_MONTHLY
+  PRO_YEARLY
+  LIFETIME_BUYOUT
+}
+
+enum BusinessType {
+  CAFE_BEVERAGE
+  RESTAURANT
+  RETAIL_SHOP
+}
+
+model User {
+  pendingPilotInvitationId      String?                @db.VarChar(64)
+  pendingPilotInvitationVersion Int?
+  pendingPilotInvitation        PilotInvitation?       @relation("PendingPilot", fields: [pendingPilotInvitationId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+  issuedPilotInvitations        PilotInvitation[]      @relation("PilotIssuer")
+  claimedPilotInvitations       PilotInvitation[]      @relation("PilotClaimant")
+  pilotEnrollments              PilotEnrollment[]
+  pilotWaitlist                 PilotWaitlistEntry?
+  pilotFeedback                 PilotFeedback[]
+  pilotFeedbackHistory          PilotFeedbackHistory[]
+  pilotAudit                    PilotAuditEvent[]
+  releaseUpdates                ReleaseSettings[]
+  id                            String                 @id @default(cuid()) @db.VarChar(64)
+  email                         String                 @unique @db.VarChar(254)
+  passwordHash                  String?                @db.LongText
+  emailVerifiedAt               DateTime?
+  emailVerificationRequired     Boolean                @default(false)
+  sessionVersion                Int                    @default(0)
+  selectedPlan                  PlanCode?
+  accountTokens                 AccountToken[]
+  googleIdentity                GoogleIdentity?
+  googleLinkChallenges          GoogleLinkChallenge[]
+  accountEmails                 EmailOutbox[]
+  onboardingDraft               OnboardingDraft?
+  onboardingRequests            OnboardingRequest[]
+  fullName                      String                 @db.LongText
+  phone                         String?                @db.LongText
+  systemRole                    SystemRole             @default(USER)
+  createdAt                     DateTime               @default(dbgenerated("(utc_timestamp(3))"))
+  updatedAt                     DateTime               @updatedAt
+  memberships                   StaffMember[]
+  ownedTenants                  Tenant[]               @relation("TenantOwner")
+}
+
+// Only stable Google identity is retained; OAuth access/refresh tokens are not stored.
+model GoogleIdentity {
+  id        String   @id @default(cuid()) @db.VarChar(64)
+  subject   String   @unique @db.VarChar(255)
+  userId    String   @unique @db.VarChar(64)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  createdAt DateTime @default(dbgenerated("(utc_timestamp(3))"))
+}
+
+// Password re-authentication grants a short, single-use same-email link attempt.
+model GoogleLinkChallenge {
+  id             String    @id @default(cuid()) @db.VarChar(64)
+  tokenHash      String    @unique
+  userId         String    @db.VarChar(64)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  sessionVersion Int
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([userId, expiresAt])
+}
+
+model Tenant {
+  pilotEnrollments PilotEnrollment[]
+  pilotFeedback    PilotFeedback[]
+  id               String            @id @default(cuid()) @db.VarChar(64)
+  name             String            @db.LongText
+  slug             String            @unique // ใช้ใน URL เช่น pos.buzlike.com/my-cafe
+  businessType     BusinessType      @default(CAFE_BEVERAGE)
+  ownerId          String            @db.VarChar(64)
+  owner            User              @relation("TenantOwner", fields: [ownerId], references: [id])
+
+  // Subscription & Entitlements
+  planCode                 PlanCode           @default(FREE_TRIAL)
+  subscriptionStatus       SubscriptionStatus @default(TRIALING)
+  trialEndsAt              DateTime
+  currentPeriodEndsAt      DateTime?
+  isLifetime               Boolean            @default(false)
+  stripeCustomerId         String?            @unique @db.VarChar(64)
+  stripeSubId              String?            @unique @db.VarChar(64)
+  stripeSubscriptionStatus String?            @db.LongText
+  cancelAtPeriodEnd        Boolean            @default(false)
+  billingSyncedAt          DateTime?
+  billingLock              BillingLock?
+
+  // Quota Limits (Override ได้รายร้านจากหน้า Super Admin)
+  maxBranches     Int     @default(1)
+  maxTerminals    Int     @default(1)
+  maxProducts     Int     @default(50)
+  maxStaff        Int     @default(3)
+  enableKds       Boolean @default(true)
+  enableQrOrder   Boolean @default(true)
+  enableRecipeBom Boolean @default(true)
+  enableExport    Boolean @default(false)
+
+  // Tax & Billing Info ของร้านค้า (สำหรับออกใบกำกับภาษีค่าสมาชิก)
+  companyName    String? @db.LongText
+  taxId          String? @db.VarChar(64)
+  billingAddress String? @db.LongText
+
+  createdAt DateTime @default(dbgenerated("(utc_timestamp(3))"))
+  updatedAt DateTime @updatedAt
+
+  branches           StoreBranch[]
+  staffMembers       StaffMember[]
+  categories         Category[]
+  products           Product[]
+  modifierGroups     ModifierGroup[]
+  ingredients        Ingredient[]
+  subscriptions      SaasPayment[]
+  auditLogs          AuditLog[]
+  onboardingRequests OnboardingRequest[]
+
+  @@unique([id, ownerId])
+}
+
+model SaasPayment {
+  providerCheckedAt     DateTime?
+  checkoutKey           String?   @unique
+  checkoutHash          String?   @db.LongText
+  checkoutUrl           String?   @db.LongText
+  checkoutExpiresAt     DateTime?
+  stripeInvoiceId       String?   @unique @db.VarChar(64)
+  stripePaymentIntentId String?   @unique @db.VarChar(64)
+  stripeSubscriptionId  String?   @db.VarChar(64)
+  periodStart           DateTime?
+  periodEnd             DateTime?
+  receipt               Json?
+  refundedAmount        Decimal   @default(0) @db.Decimal(10, 2)
+  providerRef           String?   @unique
+  couponCode            String?   @db.LongText
+  id                    String    @id @default(cuid()) @db.VarChar(64)
+  tenantId              String    @db.VarChar(64)
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  invoiceNumber         String    @unique // เช่น INV-202611-0001
+  planCode              PlanCode
+  amount                Decimal   @db.Decimal(10, 2)
+  vatAmount             Decimal   @db.Decimal(10, 2)
+  totalAmount           Decimal   @db.Decimal(10, 2)
+  paymentMethod         String // STRIPE_CARD, STRIPE_PROMPTPAY, BANK_SLIP @db.LongText
+  status                String // PENDING, PAID, FAILED, REFUNDED
+  slipImageUrl          String?   @db.LongText
+  paidAt                DateTime?
+  createdAt             DateTime  @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([tenantId, status, createdAt])
+  @@index([status, providerCheckedAt])
+}
+
+// Cross-process lease: provider reads/writes are kept outside retryable DB transactions.
+model BillingLock {
+  tenantId  String   @id @db.VarChar(64)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  token     String   @db.LongText
+  expiresAt DateTime
+}
+
+// ==========================================
+// 2. STORE BRANCH, STAFF & SHIFT MANAGEMENT
+// ==========================================
+
+enum StaffRole {
+  OWNER
+  MANAGER
+  CASHIER
+  KITCHEN
+  WAITER
+}
+
+// Pilot grants are separate from financial subscriptions and never create paid invoices.
+model ReleaseSettings {
+  id           String   @id @default("platform") @db.VarChar(64)
+  releaseMode  String   @default("LEGACY") @db.LongText
+  checkoutMode String   @default("PUBLIC") @db.LongText
+  version      Int      @default(0)
+  updatedById  String?  @db.VarChar(64)
+  updatedBy    User?    @relation(fields: [updatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  updatedAt    DateTime @updatedAt
+}
+
+model PilotCampaign {
+  id                   String            @id @default(cuid()) @db.VarChar(64)
+  slug                 String            @unique
+  status               String            @default("DRAFT") @db.LongText
+  capacity             Int               @default(5)
+  durationDays         Int               @default(30)
+  reservationHours     Int               @default(72)
+  entitlementProfile   String            @default("PILOT_PRO_V1") @db.LongText
+  entitlementsSnapshot Json
+  version              Int               @default(0)
+  createdAt            DateTime          @default(dbgenerated("(utc_timestamp(3))"))
+  invitations          PilotInvitation[]
+  enrollments          PilotEnrollment[]
+  auditEvents          PilotAuditEvent[]
+}
+
+model PilotInvitation {
+  id              String           @id @default(cuid()) @db.VarChar(64)
+  campaignId      String           @db.VarChar(64)
+  campaign        PilotCampaign    @relation(fields: [campaignId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  normalizedEmail String           @db.VarChar(254)
+  tokenHash       String           @unique
+  tokenVersion    Int              @default(1)
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  claimedByUserId String?          @db.VarChar(64)
+  claimant        User?            @relation("PilotClaimant", fields: [claimedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  claimedAt       DateTime?
+  createdByUserId String           @db.VarChar(64)
+  issuer          User             @relation("PilotIssuer", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt       DateTime         @default(dbgenerated("(utc_timestamp(3))"))
+  pendingUsers    User[]           @relation("PendingPilot")
+  enrollment      PilotEnrollment?
+
+  @@unique([campaignId, id])
+  @@index([campaignId, normalizedEmail])
+}
+
+model PilotEnrollment {
+  id                   String            @id @default(cuid()) @db.VarChar(64)
+  campaignId           String            @db.VarChar(64)
+  campaign             PilotCampaign     @relation(fields: [campaignId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownerId              String            @db.VarChar(64)
+  owner                User              @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invitationId         String            @unique @db.VarChar(64)
+  invitation           PilotInvitation   @relation(fields: [campaignId, invitationId], references: [campaignId, id], onDelete: Restrict, onUpdate: Restrict)
+  tenantId             String?           @db.VarChar(64)
+  tenant               Tenant?           @relation(fields: [tenantId, ownerId], references: [id, ownerId], onDelete: Restrict, onUpdate: Restrict)
+  status               String            @default("RESERVED")
+  reservedUntil        DateTime?
+  activatedAt          DateTime?
+  endsAt               DateTime?
+  version              Int               @default(1)
+  entitlementsSnapshot Json
+  createdAt            DateTime          @default(dbgenerated("(utc_timestamp(3))"))
+  feedback             PilotFeedback[]
+  notifications        EmailOutbox[]
+  auditEvents          PilotAuditEvent[]
+
+  @@unique([campaignId, ownerId])
+  @@unique([campaignId, invitationId])
+  @@unique([campaignId, tenantId])
+  @@unique([id, tenantId])
+  @@index([campaignId, status, reservedUntil])
+  @@index([status, endsAt])
+  @@index([tenantId, activatedAt])
+}
+
+model PilotWaitlistEntry {
+  id              String    @id @default(cuid()) @db.VarChar(64)
+  userId          String    @unique @db.VarChar(64)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  status          String    @default("WAITING") @db.LongText
+  notifyConsentAt DateTime?
+  withdrawnAt     DateTime?
+  notifiedAt      DateTime?
+  createdAt       DateTime  @default(dbgenerated("(utc_timestamp(3))"))
+}
+
+model PilotFeedback {
+  id                 String                 @id @default(cuid()) @db.VarChar(64)
+  enrollmentId       String                 @db.VarChar(64)
+  tenantId           String                 @db.VarChar(64)
+  enrollment         PilotEnrollment        @relation(fields: [enrollmentId, tenantId], references: [id, tenantId], onDelete: Restrict, onUpdate: Restrict)
+  tenant             Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branchId           String                 @db.VarChar(64)
+  branch             StoreBranch            @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  submittedByUserId  String                 @db.VarChar(64)
+  author             User                   @relation(fields: [submittedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submittedByStaffId String                 @db.VarChar(64)
+  staff              StaffMember            @relation(fields: [tenantId, submittedByStaffId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  requestKey         String
+  category           String                 @db.LongText
+  message            String                 @db.LongText
+  optionalRating     Int?
+  pageKey            String                 @db.LongText
+  deviceClass        String                 @db.LongText
+  severity           String?                @db.LongText
+  status             String                 @default("NEW")
+  createdAt          DateTime               @default(dbgenerated("(utc_timestamp(3))"))
+  history            PilotFeedbackHistory[]
+
+  @@unique([tenantId, submittedByStaffId, requestKey])
+  @@index([tenantId, createdAt])
+  @@index([status, createdAt])
+}
+
+model PilotFeedbackHistory {
+  id          String        @id @default(cuid()) @db.VarChar(64)
+  feedbackId  String        @db.VarChar(64)
+  feedback    PilotFeedback @relation(fields: [feedbackId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorUserId String        @db.VarChar(64)
+  actor       User          @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromStatus  String        @db.LongText
+  toStatus    String        @db.LongText
+  note        String        @db.LongText
+  createdAt   DateTime      @default(dbgenerated("(utc_timestamp(3))"))
+}
+
+model PilotAuditEvent {
+  id           String           @id @default(cuid()) @db.VarChar(64)
+  campaignId   String           @db.VarChar(64)
+  campaign     PilotCampaign    @relation(fields: [campaignId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  enrollmentId String?          @db.VarChar(64)
+  enrollment   PilotEnrollment? @relation(fields: [enrollmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorUserId  String?          @db.VarChar(64)
+  actor        User?            @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  action       String           @db.LongText
+  reason       String?          @db.LongText
+  before       Json?
+  after        Json?
+  createdAt    DateTime         @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([campaignId, createdAt])
+  @@index([enrollmentId, createdAt])
+}
+
+model StoreBranch {
+  pilotFeedback     PilotFeedback[]
+  id                String          @id @default(cuid()) @db.VarChar(64)
+  tenantId          String          @db.VarChar(64)
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  name              String // เช่น "สาขาสยาม (สำนักงานใหญ่)" @db.LongText
+  address           String?         @db.LongText
+  phone             String?         @db.LongText
+  taxId             String? // เลขผู้เสียภาษีสำหรับพิมพ์หัวใบเสร็จ @db.VarChar(64)
+  receiptHeader     String? // ข้อความต้อนรับบนหัวใบเสร็จ @db.LongText
+  receiptFooter     String?         @default("ขอบคุณที่ใช้บริการ / Thank you!") @db.LongText
+  promptPayId       String? // เบอร์โทร 10 หลัก หรือเลขผู้เสียภาษี 13 หลัก สำหรับสร้าง QR รับเงินหน้าร้าน @db.VarChar(64)
+  promptPayName     String? // ชื่อบัญชีพร้อมเพย์ที่แสดงให้ลูกค้าตรวจ @db.LongText
+  vatRate           Decimal         @default(7.00) @db.Decimal(5, 2)
+  vatInclusive      Boolean         @default(true) // true = ราคาสินค้ารวม VAT แล้ว, false = บวก VAT เพิ่มท้ายบิล
+  serviceChargeRate Decimal         @default(0.00) @db.Decimal(5, 2)
+  isActive          Boolean         @default(true)
+
+  diningZones    DiningZone[]
+  shifts         CashierShift[]
+  orders         Order[]
+  stockLevels    BranchIngredientStock[]
+  stockMovements StockMovement[]
+  productStocks  BranchProduct[]
+  staffAccess    StaffBranchAccess[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+}
+
+model StaffMember {
+  pilotFeedback PilotFeedback[]
+  id            String              @id @default(cuid()) @db.VarChar(64)
+  tenantId      String              @db.VarChar(64)
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  userId        String?             @db.VarChar(64)
+  user          User?               @relation(fields: [userId], references: [id])
+  displayName   String              @db.LongText
+  role          StaffRole           @default(CASHIER)
+  pinCodeHash   String // รหัส PIN 4-6 หลักสำหรับกดสลับพนักงานหน้าเครื่อง POS @db.LongText
+  isActive      Boolean             @default(true)
+  createdAt     DateTime            @default(dbgenerated("(utc_timestamp(3))"))
+  shifts        CashierShift[]
+  ordersCreated Order[]
+  branchAccess  StaffBranchAccess[]
+  invitations   StaffInvitation[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+}
+
+model CashierShift {
+  id             String      @id @default(cuid()) @db.VarChar(64)
+  tenantId       String      @db.VarChar(64)
+  branchId       String      @db.VarChar(64)
+  branch         StoreBranch @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  staffId        String      @db.VarChar(64)
+  staff          StaffMember @relation(fields: [staffId], references: [id])
+  openedAt       DateTime    @default(dbgenerated("(utc_timestamp(3))"))
+  closedAt       DateTime?
+  startingCash   Decimal     @db.Decimal(10, 2) // เงินทอนตั้งต้นในลิ้นชัก
+  expectedCash   Decimal?    @db.Decimal(10, 2) // เงินสดที่ระบบคำนวณได้ (เงินตั้งต้น + ยอดขายเงินสด - เงินสดนำออก)
+  actualCash     Decimal?    @db.Decimal(10, 2) // เงินสดที่นับได้จริงตอนปิดกะ
+  cashDifference Decimal?    @db.Decimal(10, 2) // ส่วนต่าง (ขาด/เกิน)
+  closingNote    String?     @db.LongText
+  status         String      @default("OPEN") // OPEN, CLOSED @db.LongText
+  orders         Order[]
+
+  @@index([tenantId, branchId])
+}
+
+// ==========================================
+// 3. CATALOG, MODIFIERS & RECIPE BOM (INVENTORY)
+// ==========================================
+
+model Category {
+  id             String    @id @default(cuid()) @db.VarChar(64)
+  tenantId       String    @db.VarChar(64)
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  name           String    @db.LongText
+  sortOrder      Int       @default(0)
+  kitchenStation String    @default("MAIN") // MAIN, BAR, BAKERY (ใช้แยกจอ KDS) @db.LongText
+  isActive       Boolean   @default(true)
+  products       Product[]
+
+  @@index([tenantId])
+}
+
+model Product {
+  id                String                 @id @default(cuid()) @db.VarChar(64)
+  tenantId          String                 @db.VarChar(64)
+  tenant            Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  categoryId        String                 @db.VarChar(64)
+  category          Category               @relation(fields: [categoryId], references: [id])
+  sku               String
+  barcode           String?                @db.LongText
+  name              String                 @db.LongText
+  description       String?                @db.LongText
+  imageUrl          String?                @db.LongText
+  price             Decimal                @db.Decimal(10, 2)
+  costPrice         Decimal                @default(0.00) @db.Decimal(10, 2)
+  trackStockType    String                 @default("RECIPE") // NONE, DIRECT_UNIT, RECIPE @db.LongText
+  directStockQty    Int                    @default(0) // ใช้กรณีขายสินค้าสำเร็จรูปเป็นชิ้น
+  lowStockThreshold Int                    @default(5)
+  isAvailable       Boolean                @default(true)
+  sortOrder         Int                    @default(0)
+  modifierGroups    ProductModifierGroup[]
+  recipeItems       RecipeBomItem[]
+  orderItems        OrderItem[]
+  branchStocks      BranchProduct[]
+
+  @@unique([tenantId, sku])
+  @@unique([tenantId, id])
+  @@index([tenantId, categoryId])
+}
+
+model StaffBranchAccess {
+  tenantId String      @db.VarChar(64)
+  staffId  String      @db.VarChar(64)
+  branchId String      @db.VarChar(64)
+  staff    StaffMember @relation(fields: [tenantId, staffId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  branch   StoreBranch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@id([staffId, branchId])
+  @@index([tenantId, branchId])
+}
+
+model BranchProduct {
+  tenantId    String                 @db.VarChar(64)
+  branchId    String                 @db.VarChar(64)
+  productId   String                 @db.VarChar(64)
+  price       Decimal                @db.Decimal(10, 2)
+  quantity    Int                    @default(0)
+  isAvailable Boolean                @default(true)
+  version     Int                    @default(0)
+  branch      StoreBranch            @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  product     Product                @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  movements   ProductStockMovement[]
+
+  @@id([branchId, productId])
+  @@unique([tenantId, branchId, productId])
+}
+
+model ProductStockMovement {
+  id             String        @id @default(cuid()) @db.VarChar(64)
+  tenantId       String        @db.VarChar(64)
+  branchId       String        @db.VarChar(64)
+  productId      String        @db.VarChar(64)
+  orderId        String?       @db.VarChar(64)
+  kind           String
+  quantityChange Int
+  balanceAfter   Int
+  reason         String?       @db.LongText
+  createdAt      DateTime      @default(dbgenerated("(utc_timestamp(3))"))
+  stock          BranchProduct @relation(fields: [tenantId, branchId, productId], references: [tenantId, branchId, productId], onDelete: Cascade, onUpdate: Restrict)
+  order          Order?        @relation(fields: [tenantId, branchId, orderId], references: [tenantId, branchId, id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([tenantId, branchId, orderId, productId, kind])
+  @@index([tenantId, branchId, createdAt])
+}
+
+model ModifierGroup {
+  id         String                 @id @default(cuid()) @db.VarChar(64)
+  tenantId   String                 @db.VarChar(64)
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  name       String // เช่น "ระดับความหวาน", "เลือกชนิดนม", "เพิ่มท็อปปิ้ง" @db.LongText
+  isRequired Boolean                @default(false)
+  minSelect  Int                    @default(0)
+  maxSelect  Int                    @default(1)
+  options    ModifierOption[]
+  products   ProductModifierGroup[]
+
+  @@index([tenantId])
+}
+
+model ModifierOption {
+  tenantId        String        @db.VarChar(64)
+  id              String        @id @default(cuid()) @db.VarChar(64)
+  modifierGroupId String        @db.VarChar(64)
+  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  name            String // เช่น "หวานน้อย (50%)", "นมโอ๊ต (+20฿)", "เพิ่มช็อตกาแฟ (+15฿)" @db.LongText
+  priceDelta      Decimal       @default(0.00) @db.Decimal(10, 2)
+  isDefault       Boolean       @default(false)
+  sortOrder       Int           @default(0)
+
+  @@index([tenantId])
+}
+
+model ProductModifierGroup {
+  tenantId        String        @db.VarChar(64)
+  productId       String        @db.VarChar(64)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  modifierGroupId String        @db.VarChar(64)
+  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  sortOrder       Int           @default(0)
+
+  @@id([productId, modifierGroupId])
+  @@index([tenantId])
+}
+
+model Ingredient {
+  id                String                  @id @default(cuid()) @db.VarChar(64)
+  tenantId          String                  @db.VarChar(64)
+  tenant            Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  sku               String                  @db.LongText
+  name              String // เช่น "เมล็ดกาแฟคั่วกลาง", "นมสดพาสเจอร์ไรส์", "แก้วพลาสติก 16 oz" @db.LongText
+  unit              String // เช่น "g", "ml", "ชิ้น" @db.LongText
+  costPerUnit       Decimal                 @default(0.0000) @db.Decimal(10, 4)
+  lowStockThreshold Decimal                 @default(500) @db.Decimal(10, 2)
+  recipeItems       RecipeBomItem[]
+  branchStocks      BranchIngredientStock[]
+  movements         StockMovement[]
+
+  @@index([tenantId])
+}
+
+model RecipeBomItem {
+  tenantId     String     @db.VarChar(64)
+  id           String     @id @default(cuid()) @db.VarChar(64)
+  productId    String     @db.VarChar(64)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  ingredientId String     @db.VarChar(64)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  quantityUsed Decimal    @db.Decimal(10, 2) // เช่น ใช้เมล็ดกาแฟ 18 g ต่อ 1 แก้ว
+
+  @@unique([productId, ingredientId])
+  @@index([tenantId])
+}
+
+model BranchIngredientStock {
+  tenantId     String      @db.VarChar(64)
+  id           String      @id @default(cuid()) @db.VarChar(64)
+  branchId     String      @db.VarChar(64)
+  branch       StoreBranch @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  ingredientId String      @db.VarChar(64)
+  ingredient   Ingredient  @relation(fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  currentQty   Decimal     @default(0.00) @db.Decimal(12, 2)
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([branchId, ingredientId])
+  @@index([tenantId])
+}
+
+model StockMovement {
+  id               String      @id @default(cuid()) @db.VarChar(64)
+  tenantId         String      @db.VarChar(64)
+  branchId         String      @db.VarChar(64)
+  branch           StoreBranch @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  ingredientId     String      @db.VarChar(64)
+  ingredient       Ingredient  @relation(fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  type             String // INBOUND (รับเข้า), SALE_DEDUCTION (ตัดตามบิลขาย), WASTE (ของเสีย), ADJUST (ปรับยอด) @db.LongText
+  quantityChange   Decimal     @db.Decimal(12, 2) // ค่าบวกหรือลบ
+  balanceAfter     Decimal     @db.Decimal(12, 2)
+  referenceOrderId String?     @db.VarChar(64)
+  note             String?     @db.LongText
+  createdAt        DateTime    @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([tenantId, branchId, createdAt])
+}
+
+// ==========================================
+// 4. TABLES, ORDERS, KDS & PAYMENTS
+// ==========================================
+
+model DiningZone {
+  tenantId  String        @db.VarChar(64)
+  id        String        @id @default(cuid()) @db.VarChar(64)
+  branchId  String        @db.VarChar(64)
+  branch    StoreBranch   @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  name      String // เช่น "โซนห้องแอร์ (Indoor)", "โซนสวน (Outdoor)" @db.LongText
+  sortOrder Int           @default(0)
+  tables    DiningTable[]
+
+  @@index([tenantId])
+}
+
+model DiningTable {
+  tenantId       String     @db.VarChar(64)
+  id             String     @id @default(cuid()) @db.VarChar(64)
+  zoneId         String     @db.VarChar(64)
+  zone           DiningZone @relation(fields: [zoneId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  name           String // เช่น "T-01", "T-02" @db.LongText
+  seats          Int        @default(4)
+  status         String     @default("AVAILABLE") // AVAILABLE, OCCUPIED, BILL_REQUESTED @db.LongText
+  activeQrToken  String?    @unique // Token แบบสุ่มที่สร้างใหม่ทุกครั้งที่เปิดโต๊ะ
+  currentOrderId String?    @db.VarChar(64)
+  orders         Order[]
+
+  @@index([tenantId])
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+enum OrderStatus {
+  OPEN
+  PAID
+  VOIDED
+  REFUNDED
+}
+
+enum KitchenStatus {
+  QUEUED
+  PREPARING
+  READY
+  SERVED
+}
+
+model Order {
+  clientOrderId String        @db.VarChar(64)
+  requestHash   String        @db.LongText
+  id            String        @id @default(cuid()) @db.VarChar(64)
+  tenantId      String        @db.VarChar(64)
+  branchId      String        @db.VarChar(64)
+  branch        StoreBranch   @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  shiftId       String?       @db.VarChar(64)
+  shift         CashierShift? @relation(fields: [shiftId], references: [id])
+  staffId       String?       @db.VarChar(64)
+  staff         StaffMember?  @relation(fields: [staffId], references: [id])
+  tableId       String?       @db.VarChar(64)
+  table         DiningTable?  @relation(fields: [tableId], references: [id])
+
+  orderNumber   String // เช่น "ORD-20261105-0042"
+  queueNumber   Int // เลขคิวรายวัน เช่น 42
+  orderType     OrderType     @default(DINE_IN)
+  status        OrderStatus   @default(OPEN)
+  kitchenStatus KitchenStatus @default(QUEUED)
+
+  subtotal            Decimal @db.Decimal(10, 2)
+  discountAmount      Decimal @default(0.00) @db.Decimal(10, 2)
+  discountReason      String? @db.LongText
+  serviceChargeAmount Decimal @default(0.00) @db.Decimal(10, 2)
+  vatAmount           Decimal @default(0.00) @db.Decimal(10, 2)
+  grandTotal          Decimal @db.Decimal(10, 2)
+
+  customerNote String?   @db.LongText
+  voidReason   String?   @db.LongText
+  createdAt    DateTime  @default(dbgenerated("(utc_timestamp(3))"))
+  paidAt       DateTime?
+
+  items            OrderItem[]
+  payments         OrderPayment[]
+  productMovements ProductStockMovement[]
+
+  @@unique([tenantId, clientOrderId])
+  @@unique([tenantId, orderNumber])
+  @@unique([tenantId, branchId, id])
+  @@index([tenantId, branchId, createdAt])
+}
+
+model OrderItem {
+  tenantId            String              @db.VarChar(64)
+  id                  String              @id @default(cuid()) @db.VarChar(64)
+  orderId             String              @db.VarChar(64)
+  order               Order               @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  productId           String              @db.VarChar(64)
+  product             Product             @relation(fields: [productId], references: [id])
+  productNameSnapshot String // เก็บชื่อสินค้า ณ เวลาขาย @db.LongText
+  unitPriceSnapshot   Decimal             @db.Decimal(10, 2)
+  quantity            Int
+  modifiersTotal      Decimal             @default(0.00) @db.Decimal(10, 2)
+  lineTotal           Decimal             @db.Decimal(10, 2)
+  kitchenStation      String              @default("MAIN") @db.LongText
+  kitchenStatus       KitchenStatus       @default(QUEUED)
+  note                String?             @db.LongText
+  modifiers           OrderItemModifier[]
+
+  @@index([tenantId])
+}
+
+model OrderItemModifier {
+  tenantId     String    @db.VarChar(64)
+  id           String    @id @default(cuid()) @db.VarChar(64)
+  orderItemId  String    @db.VarChar(64)
+  orderItem    OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  modifierName String    @db.LongText
+  optionName   String    @db.LongText
+  priceDelta   Decimal   @db.Decimal(10, 2)
+
+  @@index([tenantId])
+}
+
+model OrderPayment {
+  tenantId     String   @db.VarChar(64)
+  id           String   @id @default(cuid()) @db.VarChar(64)
+  orderId      String   @db.VarChar(64)
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  method       String // CASH, PROMPTPAY_QR, CREDIT_CARD, TRANSFER @db.LongText
+  amount       Decimal  @db.Decimal(10, 2)
+  cashReceived Decimal? @db.Decimal(10, 2) // เงินสดที่รับมาจากลูกค้า
+  changeGiven  Decimal? @db.Decimal(10, 2) // เงินทอน
+  referenceNo  String?  @db.LongText
+  createdAt    DateTime @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([tenantId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid()) @db.VarChar(64)
+  tenantId  String   @db.VarChar(64)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  actorName String   @db.LongText
+  action    String // เช่น "VOID_ORDER", "OPEN_SHIFT", "CHANGE_PRICE" @db.LongText
+  details   String   @db.LongText
+  createdAt DateTime @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([tenantId, createdAt])
+}
+
+model CashMovement {
+  id        String   @id @default(cuid()) @db.VarChar(64)
+  tenantId  String   @db.VarChar(64)
+  shiftId   String   @db.VarChar(64)
+  amount    Decimal  @db.Decimal(10, 2)
+  reason    String   @db.LongText
+  createdAt DateTime @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([tenantId, shiftId])
+}
+
+model PosTerminal {
+  id         String   @id @default(cuid()) @db.VarChar(64)
+  tenantId   String   @db.VarChar(64)
+  clientId   String   @db.VarChar(64)
+  branchId   String   @db.VarChar(64)
+  lastSeenAt DateTime @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@unique([tenantId, clientId])
+  @@index([tenantId])
+}
+
+model Plan {
+  code            PlanCode @id
+  name            String   @db.LongText
+  price           Decimal  @db.Decimal(10, 2)
+  maxBranches     Int
+  maxTerminals    Int
+  maxProducts     Int
+  maxStaff        Int
+  enableKds       Boolean
+  enableQrOrder   Boolean
+  enableRecipeBom Boolean
+  enableExport    Boolean
+}
+
+model Coupon {
+  code      String    @id
+  percent   Int
+  isActive  Boolean   @default(true)
+  expiresAt DateTime?
+}
+
+model WebhookEvent {
+  id          String    @id
+  type        String?   @db.LongText
+  objectId    String?   @db.VarChar(64)
+  status      String    @default("PROCESSED")
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(dbgenerated("(utc_timestamp(3))"))
+  processedAt DateTime?
+  lastError   String?   @db.LongText
+  createdAt   DateTime  @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([status, availableAt])
+}
+
+model RateLimit {
+  key     String   @id @db.VarChar(512)
+  count   Int      @default(1)
+  resetAt DateTime
+}
+
+model EmailOutbox {
+  pilotEnrollmentId      String?          @db.VarChar(64)
+  pilotEnrollment        PilotEnrollment? @relation(fields: [pilotEnrollmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  pilotEnrollmentVersion Int?
+  pilotTargetEndsAt      DateTime?
+  notificationKind       String?          @db.LongText
+  id                     String           @id @default(cuid()) @db.VarChar(64)
+  userId                 String?          @db.VarChar(64)
+  user                   User?            @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  tenantId               String?          @db.VarChar(64)
+  paymentId              String?          @unique @db.VarChar(64)
+  dedupeKey              String?          @unique
+  to                     String           @db.VarChar(254)
+  subject                String           @db.LongText
+  text                   String           @db.LongText
+  encryptedText          String?          @db.LongText
+  attempts               Int              @default(0)
+  availableAt            DateTime         @default(dbgenerated("(utc_timestamp(3))"))
+  lockedAt               DateTime?
+  lockedBy               String?          @db.VarChar(64)
+  failedAt               DateTime?
+  expiresAt              DateTime?
+  sentAt                 DateTime?
+  lastError              String?          @db.LongText
+  createdAt              DateTime         @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([tenantId])
+  @@index([sentAt, failedAt, availableAt])
+}
+
+enum AccountTokenKind {
+  VERIFY_EMAIL
+  PASSWORD_RESET
+}
+
+model AccountToken {
+  id        String           @id @default(cuid()) @db.VarChar(64)
+  userId    String           @db.VarChar(64)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  kind      AccountTokenKind
+  tokenHash String           @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime         @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@index([userId, kind])
+}
+
+model StaffInvitation {
+  id         String      @id @default(cuid()) @db.VarChar(64)
+  tenantId   String      @db.VarChar(64)
+  staffId    String      @db.VarChar(64)
+  staff      StaffMember @relation(fields: [tenantId, staffId], references: [tenantId, id], onDelete: Cascade, onUpdate: Restrict)
+  email      String      @db.VarChar(254)
+  tokenHash  String      @unique
+  invitedBy  String      @db.VarChar(64)
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime    @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@unique([tenantId, email])
+  @@index([staffId])
+}
+
+model OnboardingDraft {
+  userId        String       @id @db.VarChar(64)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  requestKey    String       @unique @db.Char(36)
+  name          String       @default("") @db.LongText
+  businessType  BusinessType @default(CAFE_BEVERAGE)
+  version       Int          @default(0)
+  completedSlug String?      @db.LongText
+  updatedAt     DateTime     @updatedAt
+}
+
+model OnboardingRequest {
+  userId      String   @db.VarChar(64)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  requestKey  String   @db.Char(36)
+  requestHash String   @db.LongText
+  tenantId    String   @unique @db.VarChar(64)
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  createdAt   DateTime @default(dbgenerated("(utc_timestamp(3))"))
+
+  @@id([userId, requestKey])
+}
+
+// InnoDB row locks replace PostgreSQL transaction advisory locks.
+model DatabaseMutex {
+  id String @id @db.Char(64)
+}

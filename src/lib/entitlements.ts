@@ -6,6 +6,7 @@ import type {
 } from "@prisma/client";
 import { z } from "zod";
 import { db } from "./db";
+import { databaseClock } from "./database-dialect";
 
 // A versioned grant, not a paid Plan or a mutable reference to the current price catalog.
 export const PILOT_PRO_V1 = Object.freeze({
@@ -117,15 +118,7 @@ export async function effectiveTenant(
     where: { tenantId: t.id, activatedAt: { not: null } },
     orderBy: { activatedAt: "desc" },
   });
-  const clock =
-    now ??
-    (grant
-      ? +(
-          await client.$queryRaw<
-            { now: Date }[]
-          >`SELECT clock_timestamp() AS now`
-        )[0].now
-      : Date.now());
+  const clock = now ?? (grant ? +(await databaseClock(client)) : Date.now());
   return resolveEntitlements(t, grant, clock);
 }
 export async function effectiveTenantById(

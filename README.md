@@ -1,5 +1,7 @@
 # BUZLIKE POS
 
+**Production บน Hostinger ใช้ MySQL/MariaDB ตามข้อกำหนดล่าสุด:** [คู่มือติดตั้ง Hostinger MySQL](docs/operations/hostinger-mysql.md) และ `.env.mysql.example` โค้ดเลือก schema/migration แยกตาม provider และเก็บ PostgreSQL เดิมสำหรับข้อมูล local ที่มีอยู่ ไม่ได้บังคับใช้ฐานข้อมูลภายนอก
+
 ข้อกำหนดล่าสุดและแผนปรับโครงสร้าง: [แบบระบบ v2](docs/architecture/pos-saas-v2.md) / [SQL blueprint](docs/architecture/pos-saas-v2.sql) — ร้านสมัครใหม่เริ่มเปล่าแล้ว ส่วนแบบฐานข้อมูล v2 ตรวจสอบแยกและยังไม่ได้ใช้แทน schema ของแอป
 
 แผน UX ฉบับละเอียดและเกณฑ์รับงาน: [สมัครและเริ่มตั้งร้าน](docs/signup-onboarding-ux-plan.md)
@@ -86,6 +88,8 @@ npm audit
 ก่อน `npm test` ให้เปิดฐานข้อมูลและแอปที่ port 3100 ชุด domain ใช้ transaction แล้ว rollback; ชุด HTTP สร้างร้าน `http-*` แยกต่างหาก ไม่แก้ข้อมูลร้านจริง รายงานผลและภาพหน้าจออยู่ใน `docs/verification.md` และ `docs/evidence/`
 
 ## Deploy / Self-host
+
+สำหรับ Hostinger/MySQL ให้ใช้ [คู่มือ MySQL ฉบับปัจจุบัน](docs/operations/hostinger-mysql.md) แทน Compose/PostgreSQL ด้านล่าง
 
 เชื่อม repository กับ Hostinger: [คู่มือ GitHub → Hostinger](docs/operations/hostinger-github.md) — เลือก branch `main`, Node.js 22.x, Next.js และ build `npm run build`; ต้องเตรียม PostgreSQL, workers และพื้นที่เก็บสลิปแยกตามชนิด hosting
 

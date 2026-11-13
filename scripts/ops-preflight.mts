@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { productionConfigIssues } from "../src/lib/production-config";
+import { mysqlDatabase } from "../src/lib/database-dialect";
 const issues = productionConfigIssues(process.env);
 try {
   const settings = await db.releaseSettings.findUnique({
@@ -38,9 +39,13 @@ try {
     }))
   )
     issues.push("DEMO_DATA_PRESENT");
-  const [{ pending }] = await db.$queryRaw<
-    { pending: number }[]
-  >`SELECT count(*)::int AS pending FROM "_prisma_migrations" WHERE finished_at IS NULL AND rolled_back_at IS NULL`;
+  const [{ pending }] = mysqlDatabase()
+    ? await db.$queryRaw<
+        { pending: bigint }[]
+      >`SELECT count(*) AS pending FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL`
+    : await db.$queryRaw<
+        { pending: number }[]
+      >`SELECT count(*)::int AS pending FROM "_prisma_migrations" WHERE finished_at IS NULL AND rolled_back_at IS NULL`;
   if (pending) issues.push("MIGRATION_INCOMPLETE");
 } catch {
   issues.push("DATABASE_NOT_READY");

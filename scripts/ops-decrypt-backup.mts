@@ -10,7 +10,7 @@ const targetRoot = path.resolve("data/restore-drills");
 await mkdir(targetRoot, { recursive: true });
 const output = path.join(
   targetRoot,
-  `decrypted-${new Date().toISOString().replace(/[:.]/g, "-")}.pgdump`,
+  `decrypted-${new Date().toISOString().replace(/[:.]/g, "-")}${input.endsWith(".sql.enc") ? ".sql" : ".pgdump"}`,
 );
 await decryptBackup(
   input,

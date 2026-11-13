@@ -9,10 +9,10 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "db:local": "node scripts/local-db.mjs",
-    "db:migrate": "prisma migrate deploy",
+    "db:migrate": "node scripts/prisma-provider.mjs migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "setup": "node scripts/setup.mjs",
-    "postinstall": "prisma generate",
+    "postinstall": "node scripts/prisma-provider.mjs generate",
     "data:import": "tsx scripts/import-store.mts",
     "email:worker": "tsx scripts/email-worker.mts",
     "email:check": "tsx scripts/smtp-live.mts",
@@ -27,7 +27,10 @@
     "ops:backup": "tsx scripts/ops-backup.mts",
     "ops:decrypt-backup": "tsx scripts/ops-decrypt-backup.mts",
     "ops:restore-drill": "tsx scripts/ops-restore-drill.mts",
-    "ops:test-restore": "tsx scripts/pilot-d-restore-check.mts"
+    "ops:test-restore": "tsx scripts/pilot-d-restore-check.mts",
+    "db:generate": "node scripts/prisma-provider.mjs generate",
+    "test:mysql": "tsx --test tests/mysql.integration.test.mts",
+    "ops:backup:mysql": "tsx scripts/ops-backup-mysql.mts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

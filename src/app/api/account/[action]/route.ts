@@ -1,3 +1,4 @@
+import { transactionLock } from "@/lib/database-dialect";
 import { z } from "zod";
 import { hash } from "bcryptjs";
 import { auth } from "@/auth";
@@ -33,7 +34,7 @@ export async function POST(
         .object({ next: z.string().max(200).optional() })
         .parse(body);
       await serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${session.user.id}))`;
+        await transactionLock(tx, session.user.id);
         const user = await tx.user.findUniqueOrThrow({
           where: { id: session.user.id },
         });
@@ -59,7 +60,7 @@ export async function POST(
         .parse(body);
       await rateLimit(`reset:${email}`, 3, 900000);
       await serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${email}))`;
+        await transactionLock(tx, email);
         const user = await tx.user.findUnique({ where: { email } });
         if (user?.passwordHash)
           await issueAccountToken(tx, user, "PASSWORD_RESET");
@@ -88,7 +89,7 @@ export async function POST(
           input.token,
           "PASSWORD_RESET",
         );
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${row.userId}))`;
+        await transactionLock(tx, row.userId);
         await tx.user.update({
           where: { id: row.userId },
           data: { passwordHash, sessionVersion: { increment: 1 } },

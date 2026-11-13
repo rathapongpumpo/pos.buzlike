@@ -196,6 +196,7 @@ test("HTTP onboarding creates an empty store; owner adds their own category/prod
       "0",
     );
   } finally {
+    await db.product.deleteMany({ where: { tenantId: tenant.id } });
     await db.tenant.delete({ where: { id: tenant.id } });
   }
 });
@@ -505,6 +506,7 @@ after(async () => {
   if (tenant && tenant.slug === slug && slug.startsWith("http-")) {
     await db.order.deleteMany({ where: { tenantId } });
     await db.cashierShift.deleteMany({ where: { tenantId } });
+    await db.product.deleteMany({ where: { tenantId } });
     await db.tenant.delete({ where: { id: tenantId } });
     await db.user.delete({ where: { id: tenant.ownerId } });
   }

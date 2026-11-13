@@ -1,3 +1,4 @@
+import { transactionLock } from "./database-dialect";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -61,7 +62,7 @@ export async function createOrder(
   input: OrderInput,
   publicQr = false,
 ) {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+  await transactionLock(tx, tenantId);
   assert(
     !input.branchId || input.branchId === branchId,
     "สาขาของบิลไม่ตรงกับสาขาที่กำลังใช้งาน",

@@ -471,6 +471,7 @@ test("Phase 1: database rejects cross-tenant grants/stocks and negative quantiti
 after(async () => {
   await db.order.deleteMany({ where: { tenantId } });
   await db.cashierShift.deleteMany({ where: { tenantId } });
+  await db.product.deleteMany({ where: { tenantId: { in: [tenantId, otherTenant] } } });
   await db.tenant.deleteMany({
     where: { id: { in: [tenantId, otherTenant] } },
   });

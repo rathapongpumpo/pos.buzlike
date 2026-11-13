@@ -1,3 +1,4 @@
+import { transactionLock } from "@/lib/database-dialect";
 import { z } from "zod";
 import { randomUUID, createHmac } from "node:crypto";
 import { auth } from "@/auth";
@@ -66,7 +67,7 @@ export async function POST(req: Request) {
         session.user.id,
         body.pilotEnrollmentId,
       );
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${session.user.id}))`;
+      await transactionLock(tx, session.user.id);
       assert(
         !enrollment?.activatedAt,
         "สิทธิ์นี้เปิดร้านแล้ว กรุณาใช้งานร้านเดิม",

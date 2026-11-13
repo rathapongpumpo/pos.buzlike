@@ -1,9 +1,10 @@
+import { transactionLock } from "./database-dialect";
 import { serial } from "./db";
 import { assert } from "./errors";
 import { PILOT_PRO_V1 } from "./entitlements";
 export async function initializeEmptyPilot(actorId: string) {
   return serial(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('pilot-initialization'))`;
+    await transactionLock(tx, "pilot-initialization");
     const actor = await tx.user.findUnique({ where: { id: actorId } });
     assert(
       actor?.systemRole === "SUPER_ADMIN",

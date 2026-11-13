@@ -1,3 +1,4 @@
+import { transactionLock, copyBranchPrices } from "@/lib/database-dialect";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { compare, hash } from "bcryptjs";
@@ -661,7 +662,7 @@ async function mutate(req: NextRequest, route: Route) {
         })
         .parse(b);
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         const orders = await tx.order.findMany({
           where: {
             tenantId,
@@ -769,7 +770,7 @@ async function mutate(req: NextRequest, route: Route) {
     if (key === "shifts/open") {
       const startingCash = number.min(0).max(1000000).parse(b.startingCash);
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${branchId}))`;
+        await transactionLock(tx, branchId);
         assert(
           !(await tx.cashierShift.findFirst({
             where: { tenantId, branchId, status: "OPEN" },
@@ -806,7 +807,7 @@ async function mutate(req: NextRequest, route: Route) {
           where: { tenantId, branchId, status: "OPEN" },
         });
         assert(shift, "ไม่มีกะที่เปิดอยู่", 409);
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${branchId}))`;
+        await transactionLock(tx, branchId);
         return tx.cashMovement.create({
           data: { tenantId, shiftId: shift.id, ...input },
         });
@@ -815,7 +816,7 @@ async function mutate(req: NextRequest, route: Route) {
     if (key === "shifts/close") {
       const actualCash = number.nonnegative().max(10000000).parse(b.actualCash);
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         const shift = await tx.cashierShift.findFirst({
           where: { tenantId, branchId, status: "OPEN" },
         });
@@ -886,7 +887,7 @@ async function mutate(req: NextRequest, route: Route) {
         ...data
       } = input;
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         assert(
           await tx.category.findFirst({
             where: { id: data.categoryId, tenantId },
@@ -1038,7 +1039,7 @@ async function mutate(req: NextRequest, route: Route) {
         "ของเสียต้องเป็นค่าลบ",
       );
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         const s = await tx.branchIngredientStock.findFirst({
           where: { tenantId, branchId, ingredientId: input.ingredientId },
         });
@@ -1144,7 +1145,7 @@ async function mutate(req: NextRequest, route: Route) {
     if (path[0] === "tables" && path.length === 3) {
       feature(tenant, "enableQrOrder");
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         const table = await tx.diningTable.findFirst({
           where: { tenantId, id: path[1], zone: { branchId } },
         });
@@ -1239,7 +1240,7 @@ async function mutate(req: NextRequest, route: Route) {
         403,
       );
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         const data = {
           displayName: input.displayName,
           role: input.role,
@@ -1346,7 +1347,7 @@ async function mutate(req: NextRequest, route: Route) {
         })
         .parse(b);
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+        await transactionLock(tx, tenantId);
         const count = await tx.storeBranch.count({
           where: { tenantId, isActive: true },
         });
@@ -1359,7 +1360,7 @@ async function mutate(req: NextRequest, route: Route) {
         const branch = await tx.storeBranch.create({
           data: { tenantId, ...input },
         });
-        await tx.$executeRaw`UPDATE "BranchProduct" dest SET price=src.price,"isAvailable"=src."isAvailable" FROM "BranchProduct" src WHERE dest."tenantId"=${tenantId} AND dest."branchId"=${branch.id} AND src."tenantId"=${tenantId} AND src."branchId"=${branchId} AND src."productId"=dest."productId"`;
+        await copyBranchPrices(tx, tenantId, branchId, branch.id);
         const ingredients = await tx.ingredient.findMany({
           where: { tenantId },
         });

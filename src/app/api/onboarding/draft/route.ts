@@ -1,3 +1,4 @@
+import { transactionLock } from "@/lib/database-dialect";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { auth } from "@/auth";
@@ -33,7 +34,7 @@ export async function PUT(req: Request) {
       })
       .parse(await req.json());
     return serial(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+      await transactionLock(tx, userId);
       const current = await tx.onboardingDraft.findUnique({
         where: { userId },
       });
@@ -66,7 +67,7 @@ export async function POST(req: Request) {
       .object({ version: z.number().int().nonnegative() })
       .parse(await req.json());
     return serial(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+      await transactionLock(tx, userId);
       const current = await tx.onboardingDraft.findUnique({
         where: { userId },
       });

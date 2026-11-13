@@ -1,3 +1,4 @@
+import { transactionLock } from "./database-dialect";
 import { Prisma } from "@prisma/client";
 import { assert } from "./errors";
 import { effectiveTenantById } from "./entitlements";
@@ -89,7 +90,7 @@ export async function returnStock(
   branchId: string,
   orderId: string,
 ) {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+  await transactionLock(tx, tenantId);
   await tx.order.findFirstOrThrow({
     where: { id: orderId, tenantId, branchId },
   });

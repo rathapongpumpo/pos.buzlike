@@ -1,3 +1,4 @@
+import { transactionLock } from "@/lib/database-dialect";
 import { z } from "zod";
 import { hash } from "bcryptjs";
 import { auth } from "@/auth";
@@ -86,7 +87,7 @@ export async function POST(
         .parse(body);
       const pinCodeHash = await hash(input.pin, 10);
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${invite.tenantId}))`;
+        await transactionLock(tx, invite.tenantId);
         const user = await tx.user.findUniqueOrThrow({
           where: { id: session.user.id },
         });
@@ -167,7 +168,7 @@ export async function POST(
     await rateLimit(`invite-owner:${ctx.session.user.id}`, 20, 3600000);
     if (action === "create" || action === "resend" || action === "revoke") {
       return serial(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ctx.tenant.id}))`;
+        await transactionLock(tx, ctx.tenant.id);
         const rawTenant = await tx.tenant.findUniqueOrThrow({
           where: { id: ctx.tenant.id },
         });

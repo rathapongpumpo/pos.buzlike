@@ -316,6 +316,7 @@ test("Account journey: platform admins enter admin; removed users become guests;
 });
 
 after(async () => {
+  await db.product.deleteMany({ where: { tenantId: { in: tenantIds } } });
   await db.tenant.deleteMany({ where: { id: { in: tenantIds } } });
   await db.user.deleteMany({ where: { id: { in: userIds } } });
   await db.rateLimit.deleteMany({

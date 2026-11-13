@@ -1,3 +1,4 @@
+import { lockRow } from "./database-dialect";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { serial } from "./db";
@@ -142,7 +143,7 @@ export async function updateFeedback(
 ) {
   return serial(async (tx) => {
     await pilotAdmin(tx, actorId);
-    await tx.$queryRaw`SELECT id FROM "PilotFeedback" WHERE id=${input.id} FOR UPDATE`;
+    await lockRow(tx, "PilotFeedback", input.id);
     const old = await tx.pilotFeedback.findUniqueOrThrow({
       where: { id: input.id },
     });

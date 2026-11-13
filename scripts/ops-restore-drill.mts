@@ -11,6 +11,7 @@ const backupArg = process.argv[process.argv.indexOf("--backup") + 1];
 if (!process.argv.includes("--backup") || !backupArg)
   throw Error("Usage: ops-restore-drill --backup data/backups/pre-pilot-d-...");
 const sourceUrl = new URL(process.env.DATABASE_URL!);
+assert(sourceUrl.protocol !== "mysql:", "This physical restore drill is PostgreSQL-only; restore a MySQL SQL dump into a separate MySQL database instead");
 assert(
   ["localhost", "127.0.0.1"].includes(sourceUrl.hostname),
   "Local drill only",

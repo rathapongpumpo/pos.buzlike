@@ -1,5 +1,7 @@
 # เชื่อม GitHub กับ Hostinger
 
+**อัปเดต 13 พฤศจิกายน 2026:** ผู้ใช้เลือก MySQL/MariaDB ที่รวมกับ Hostinger โค้ดเพิ่ม schema/migration สำหรับ MySQL แล้ว ให้ใช้ [คู่มือ Hostinger MySQL](hostinger-mysql.md) และ `.env.mysql.example` แทนข้อจำกัด PostgreSQL ในบันทึกรอบส่ง GitHub เดิมด้านล่าง
+
 Repository: https://github.com/rathapongpumpo/pos.buzlike — branch `main`, root directory `/` (โฟลเดอร์บนสุดของ repository)
 
 รอบนี้ส่งขึ้น GitHub เท่านั้น ยังไม่ได้ deploy, ตั้งโดเมน, เชื่อมฐานข้อมูล production หรือเปิดรับร้านนำร่อง ข้อมูลจริงในเครื่อง, `.env`, backup, สลิป และ generated QA evidence ไม่ถูกส่งขึ้น Git; ลิงก์หลักฐานในรายงานเก่าบางส่วนจึงเปิดได้เฉพาะ checkout ต้นทาง
