@@ -5,6 +5,7 @@ import { AppError } from "@/lib/errors";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { db } from "@/lib/db";
+import { isStoreScreen } from "@/lib/store-routes";
 export const dynamic = "force-dynamic";
 export default async function Page({
   params,
@@ -14,25 +15,7 @@ export default async function Page({
   searchParams: Promise<{ branchId?: string }>;
 }) {
   const { storeSlug, screen } = await params;
-  if (
-    ![
-      "start",
-      "dashboard",
-      "pos",
-      "cfd",
-      "products",
-      "inventory",
-      "tables",
-      "kds",
-      "orders",
-      "shifts",
-      "staff",
-      "settings",
-      "billing",
-      "feedback",
-    ].includes(screen)
-  )
-    notFound();
+  if (!isStoreScreen(screen)) notFound();
   const roles =
     screen === "billing" || screen === "settings"
       ? ["OWNER"]

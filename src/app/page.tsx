@@ -7,6 +7,16 @@ import { accountNavigation } from "@/lib/account-navigation";
 import { MarketingHeader } from "@/components/marketing-header";
 import { planPrices } from "@/lib/plan-pricing";
 import { releasePolicy } from "@/lib/release-policy";
+import {
+  publicMetadata,
+  publicStructuredData,
+  supportEmail,
+} from "@/lib/public-site";
+export const metadata = publicMetadata(
+  "/",
+  "ระบบขายหน้าร้านสำหรับคาเฟ่ ร้านอาหาร และร้านค้าปลีก",
+  "รู้จักฟีเจอร์ BUZLIKE POS ตั้งแต่ขายหน้าร้าน สต็อก และพนักงาน ไปจนถึง QR สั่งอาหาร จอครัว และสูตรวัตถุดิบใน Pro",
+);
 export const dynamic = "force-dynamic";
 export default async function Page() {
   const [account, availablePlans, policy] = await Promise.all([
@@ -24,6 +34,15 @@ export default async function Page() {
   const entryHref = account?.href ?? guestHref;
   return (
     <main className="marketing">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(publicStructuredData()).replace(
+            /</g,
+            "\\u003c",
+          ),
+        }}
+      />
       <MarketingHeader
         entryHref={guestHref}
         entryLabel={privatePilot ? "ลงทะเบียนรอ" : "ทดลองใช้งานฟรี"}
@@ -252,6 +271,8 @@ export default async function Page() {
       <footer className="marketing-footer">
         <Link href="https://buzlike.com/">BUZLIKE SYSTEMS</Link>
         <span>ระบบขายหน้าร้านสำหรับคาเฟ่ ร้านอาหาร และร้านค้าปลีก</span>
+        <Link href="/about">เกี่ยวกับเรา</Link>
+        <a href={`mailto:${supportEmail}`}>{supportEmail}</a>
         <Link href="/privacy">ความเป็นส่วนตัว</Link>
         <Link href="/terms">ข้อกำหนดนำร่อง</Link>
         <Link href="/support">ช่วยเหลือ</Link>

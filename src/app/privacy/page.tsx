@@ -1,4 +1,10 @@
 import { PublicInfo } from "@/components/public-info";
+import { publicMetadata } from "@/lib/public-site";
+export const metadata = publicMetadata(
+  "/privacy",
+  "ความเป็นส่วนตัว",
+  "แนวปฏิบัติด้านข้อมูลบัญชี ร้าน สาขา และการใช้งาน BUZLIKE POS ในช่วงนำร่อง",
+);
 export default function Page() {
   return (
     <PublicInfo title="ความเป็นส่วนตัวช่วงนำร่อง">

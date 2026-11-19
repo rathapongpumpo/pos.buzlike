@@ -3,6 +3,7 @@ import { IBM_Plex_Sans_Thai, Sarabun, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { auth } from "@/auth";
 import { SessionSync } from "@/components/account-controls";
+import { siteOrigin } from "@/lib/public-site";
 const thai = IBM_Plex_Sans_Thai({
   subsets: ["thai", "latin"],
   weight: ["400", "500", "600", "700"],
@@ -22,6 +23,8 @@ const mono = JetBrains_Mono({
 });
 export const viewport: Viewport = { themeColor: "#fff9f5" };
 export const metadata: Metadata = {
+  metadataBase: new URL(siteOrigin),
+  robots: { index: false, follow: false },
   icons: { icon: "/favicon.svg" },
   title: "BUZLIKE POS · ระบบขายหน้าร้าน",
   description: "ระบบ POS สำหรับร้านกาแฟ ร้านอาหาร และร้านค้าปลีก",

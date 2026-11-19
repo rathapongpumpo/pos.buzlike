@@ -54,7 +54,7 @@ export function MarketingHeader({
             <Link href="/#pricing" onClick={() => setOpen(false)}>
               แพ็กเกจและราคา
             </Link>
-            <Link href="https://buzlike.com/">เกี่ยวกับเรา</Link>
+            <Link href="/about">เกี่ยวกับเรา</Link>
           </div>
           <div className="marketing-actions">
             {account ? (
