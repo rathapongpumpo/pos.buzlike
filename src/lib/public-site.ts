@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { markdownPath } from "./public-formats";
 export const siteOrigin = "https://pos.buzlike.com";
 export const supportEmail = "support@buzlike.com";
 export const publicPages = [
@@ -17,7 +18,10 @@ export function publicMetadata(
   return {
     title: `${title} | BUZLIKE POS`,
     description,
-    alternates: { canonical: new URL(path, siteOrigin).href },
+    alternates: {
+      canonical: new URL(path, siteOrigin).href,
+      types: { "text/markdown": new URL(markdownPath(path), siteOrigin).href },
+    },
     robots: { index: true, follow: true },
     openGraph: {
       type: "website",

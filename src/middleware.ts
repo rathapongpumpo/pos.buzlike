@@ -4,6 +4,11 @@ import { db } from "@/lib/db";
 import { publicPages } from "@/lib/public-site";
 import { isStoreScreen } from "@/lib/store-routes";
 import { notFoundResponse } from "@/lib/not-found-response";
+import { markdownPath, prefersMarkdown } from "@/lib/public-formats";
+import {
+  markdownResponse,
+  publicRepresentationHeaders,
+} from "@/lib/public-markdown";
 const publicRoutes = new Set<string>([
   ...publicPages,
   "/login",
@@ -18,6 +23,7 @@ const publicRoutes = new Set<string>([
   "/pilot/waitlist",
   "/robots.txt",
   "/sitemap.xml",
+  "/llms.txt",
 ]);
 const publicFiles = new Set([
   "/favicon.svg",
@@ -31,6 +37,17 @@ const publicFiles = new Set([
 ]);
 export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
+  const markdownPage = publicPages.find((p) => markdownPath(p) === path);
+  if (markdownPage) return markdownResponse(markdownPage, req.method);
+  const publicPage = publicPages.find((p) => p === path);
+  if (publicPage) {
+    if (
+      req.headers.get("rsc") !== "1" &&
+      prefersMarkdown(req.headers.get("accept"))
+    )
+      return markdownResponse(publicPage, req.method);
+    return publicRepresentationHeaders(NextResponse.next(), publicPage);
+  }
   if (publicRoutes.has(path) || publicFiles.has(path))
     return NextResponse.next();
   if (/^\/m\/[^/]+$/.test(path)) {
